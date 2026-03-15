@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from recon.banners import grab_http_server_header, grab_ssh_banner
 from recon.diff import diff_reports
 from recon.report import write_markdown
 from recon.scanner import tcp_check
@@ -35,7 +36,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="reports", help="Output directory for JSON/MD reports (default: reports)")
     p.add_argument("--md", action="store_true", help="Also write reports/latest.md (markdown summary)")
     p.add_argument("--diff", action="store_true", help="After scan, compare with previous report in --out and print changes")
+    p.add_argument("--banners", action="store_true", help="If a port is open, attempt a lightweight banner grab (SSH/HTTP)")
     return p
+
+
+def _banner_for(host: str, port: int, timeout_s: float) -> str | None:
+    if port == 22:
+        return grab_ssh_banner(host, port=22, timeout_s=timeout_s)
+    if port in (80, 443):
+        return grab_http_server_header(host, port=port, timeout_s=timeout_s)
+    return None
 
 
 def main() -> int:
@@ -62,13 +72,18 @@ def main() -> int:
         host_result = {"host": host, "ports": []}
         for port in ports:
             r = tcp_check(host, port, timeout_s=args.timeout)
-            host_result["ports"].append(
-                {"port": r.port, "open": r.open, "error": r.error, "rtt_ms": r.rtt_ms}
-            )
+            port_rec = {"port": r.port, "open": r.open, "error": r.error, "rtt_ms": r.rtt_ms}
+            if args.banners and r.open:
+                banner = _banner_for(host, port, timeout_s=args.timeout)
+                if banner:
+                    port_rec["banner"] = banner
+            host_result["ports"].append(port_rec)
         results.append(host_result)
 
+    generated = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     report = {
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00","Z"),
+        "generated_at": generated,
         "sources": list(ts.sources),
         "targets": list(ts.hosts),
         "ports": ports,
@@ -77,7 +92,6 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"recon_{stamp}.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"wrote: {json_path}")

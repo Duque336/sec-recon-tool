@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from recon.report import write_markdown
 from recon.scanner import tcp_check
 from recon.targets import parse_targets
 
@@ -14,7 +15,6 @@ def _parse_ports(s: str) -> list[int]:
         if not part:
             continue
         ports.append(int(part))
-    # de-dupe, preserve order
     seen = set()
     out: list[int] = []
     for p in ports:
@@ -31,7 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20, help="Preview limit: how many expanded hosts to print")
     p.add_argument("--ports", default="22,80,443", help="Comma-separated TCP ports to check (default: 22,80,443)")
     p.add_argument("--timeout", type=float, default=0.5, help="TCP connect timeout in seconds (default: 0.5)")
-    p.add_argument("--out", default="reports", help="Output directory for JSON report (default: reports)")
+    p.add_argument("--out", default="reports", help="Output directory for JSON/MD reports (default: reports)")
+    p.add_argument("--md", action="store_true", help="Also write reports/latest.md (markdown summary)")
     return p
 
 
@@ -54,7 +55,6 @@ def main() -> int:
     else:
         print("preview: (none)")
 
-    # Scan
     results = []
     for host in ts.hosts:
         host_result = {"host": host, "ports": []}
@@ -76,9 +76,15 @@ def main() -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    out_path = out_dir / f"recon_{stamp}.json"
-    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"wrote: {out_path}")
+    json_path = out_dir / f"recon_{stamp}.json"
+    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"wrote: {json_path}")
+
+    if args.md:
+        md_path = out_dir / "latest.md"
+        write_markdown(json_path, md_path)
+        print(f"wrote: {md_path}")
+
     return 0
 
 

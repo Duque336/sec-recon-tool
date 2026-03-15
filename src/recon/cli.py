@@ -1,8 +1,9 @@
 import argparse
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
+from recon.diff import diff_reports
 from recon.report import write_markdown
 from recon.scanner import tcp_check
 from recon.targets import parse_targets
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, default=0.5, help="TCP connect timeout in seconds (default: 0.5)")
     p.add_argument("--out", default="reports", help="Output directory for JSON/MD reports (default: reports)")
     p.add_argument("--md", action="store_true", help="Also write reports/latest.md (markdown summary)")
+    p.add_argument("--diff", action="store_true", help="After scan, compare with previous report in --out and print changes")
     return p
 
 
@@ -66,7 +68,7 @@ def main() -> int:
         results.append(host_result)
 
     report = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00","Z"),
         "sources": list(ts.sources),
         "targets": list(ts.hosts),
         "ports": ports,
@@ -75,7 +77,7 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"recon_{stamp}.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"wrote: {json_path}")
@@ -84,6 +86,29 @@ def main() -> int:
         md_path = out_dir / "latest.md"
         write_markdown(json_path, md_path)
         print(f"wrote: {md_path}")
+
+    if args.diff:
+        files = sorted(out_dir.glob("recon_*.json"))
+        if len(files) >= 2:
+            prev_json = files[-2]
+            new_hosts, missing_hosts, deltas = diff_reports(prev_json, json_path)
+            print("\nDIFF (prev -> current)")
+            print(f"prev: {prev_json.name}")
+            print(f"curr: {json_path.name}")
+            if new_hosts:
+                print(f"new hosts: {new_hosts}")
+            if missing_hosts:
+                print(f"missing hosts: {missing_hosts}")
+            if deltas:
+                for d in deltas:
+                    if d.opened:
+                        print(f"{d.host} newly open: {list(d.opened)}")
+                    if d.closed:
+                        print(f"{d.host} newly closed: {list(d.closed)}")
+            if not (new_hosts or missing_hosts or deltas):
+                print("no changes detected")
+        else:
+            print("\nDIFF: need at least 2 reports in output dir")
 
     return 0
 

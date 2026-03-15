@@ -21,6 +21,7 @@ def write_markdown(report_json: Path, out_md: Path) -> None:
     generated = data.get("generated_at", "")
     ports = data.get("ports", [])
 
+    # Summary table
     rows: list[SummaryRow] = []
     for hostrec in data.get("results", []):
         host = hostrec.get("host", "")
@@ -40,6 +41,15 @@ def write_markdown(report_json: Path, out_md: Path) -> None:
             )
         )
 
+    # Banner findings (host, port, banner)
+    banner_rows: list[tuple[str, int, str]] = []
+    for hostrec in data.get("results", []):
+        host = hostrec.get("host", "")
+        for prec in hostrec.get("ports", []):
+            banner = prec.get("banner")
+            if banner:
+                banner_rows.append((host, int(prec["port"]), str(banner)))
+
     lines: list[str] = []
     lines.append("# Recon Report")
     lines.append("")
@@ -47,9 +57,29 @@ def write_markdown(report_json: Path, out_md: Path) -> None:
     lines.append(f"- Ports scanned: `{ports}`")
     lines.append(f"- Report file: `{report_json.name}`")
     lines.append("")
+
+    lines.append("## Summary")
+    lines.append("")
     lines.append("| Host | Open Ports | Notes |")
     lines.append("|---|---:|---|")
     for r in rows:
         lines.append(f"| `{r.host}` | `{r.open_ports}` | {r.notes} |")
     lines.append("")
+
+    lines.append("## Banners")
+    lines.append("")
+    if not banner_rows:
+        lines.append("_No banners captured (run with `--banners` and ensure services are reachable)._")
+        lines.append("")
+    else:
+        lines.append("| Host | Port | Banner |")
+        lines.append("|---|---:|---|")
+        # keep it readable: truncate very long banners
+        for host, port, banner in banner_rows:
+            b = banner.replace("|", "\\|")
+            if len(b) > 120:
+                b = b[:117] + "..."
+            lines.append(f"| `{host}` | `{port}` | `{b}` |")
+        lines.append("")
+
     out_md.write_text("\n".join(lines), encoding="utf-8")
